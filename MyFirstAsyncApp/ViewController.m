@@ -11,7 +11,7 @@
 
 #import <AsyncDisplayKit/AsyncDisplayKit.h>
 #import <AsyncDisplayKit/ASAssert.h>
-
+#import <ASCellNode.h>
 #import <AddressBook/AddressBook.h>
 
 @interface ViewController ()<ASTableViewDataSource, ASTableViewDelegate> {
@@ -23,6 +23,8 @@
 @property (nonatomic, strong) NSMutableArray *contactCollection;
 @property (nonatomic, readonly) ABAddressBookRef addressbookReference;
 
+@property (atomic, assign) BOOL dataSourceLocked;
+
 @end
 
 @implementation ViewController
@@ -30,6 +32,26 @@
 #pragma mark - Private Synthesizers
 
 @synthesize contactCollection = _contactCollection;
+@synthesize addressbookReference = _addressbookReference;
+
+#pragma mark - Overridden Getters 
+
+- (NSMutableArray *)contactCollection {
+    if (_contactCollection == nil) {
+        _contactCollection = @[].mutableCopy;
+    }
+    
+    return _contactCollection;
+}
+
+//addressbook getters
+- (ABAddressBookRef)addressbookReference {
+    if (_addressbookReference == nil) {
+        _addressbookReference = ABAddressBookCreateWithOptions(NULL, nil);
+    }
+    
+    return _addressbookReference;
+}
 
 
 #pragma mark - Private View Life Cycle
@@ -43,7 +65,19 @@
     _tableView.separatorStyle = UITableViewCellSeparatorStyleNone; // KittenNode has its own separator
     _tableView.asyncDataSource = self;
     _tableView.asyncDelegate = self;
+    
+    [self.view addSubview:_tableView];
 }
+
+- (void)viewWillAppear:(BOOL)animated {
+    [self requestAddressbookPermission];
+}
+
+- (void)viewWillLayoutSubviews
+{
+    _tableView.frame = self.view.bounds;
+}
+
 
 #pragma mark - Memory Management Handler
 
@@ -67,6 +101,7 @@
     contact.isSelected = TRUE;
     contact.contactID = [NSNumber numberWithInt:ABRecordGetRecordID(rawContact)];
     contact.firstname = (__bridge NSString *)ABRecordCopyValue(rawContact, kABPersonFirstNameProperty);
+    NSLog(@"firstname:%@", contact.firstname);
     contact.lastname = (__bridge NSString *)ABRecordCopyValue(rawContact, kABPersonLastNameProperty);
     contact.emailCollection = (__bridge NSArray *)ABMultiValueCopyArrayOfAllValues(raweMail);
     contact.numberCollection = (__bridge NSArray *)ABMultiValueCopyArrayOfAllValues(rawMobilenumber);
@@ -112,6 +147,7 @@
                 }
                 
             }];
+
         });
     }
 }
@@ -133,31 +169,64 @@
     }
 }
 
+#pragma mark - Table View
+
+#pragma mark Table View Cells
+
 - (void)insertNewCellUsingValues:(ContactModel *)values {
-    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_BACKGROUND, 0), ^{
-        
-        NSUInteger nextIndex = self.contactCollection.count;
-        NSIndexPath *indexPath = [NSIndexPath indexPathForRow:nextIndex inSection:0];
-        NSArray *indexPaths = [NSArray arrayWithObject:indexPath];
-        
-        NSPredicate *checkIfContactExists = [NSPredicate predicateWithFormat:@"SELF.contactID = %@", values.contactID];
-        if ([self.contactCollection filteredArrayUsingPredicate:checkIfContactExists].count == 0) {
-            [self.contactCollection insertObject:values atIndex:self.contactCollection.count];
-        }
-        
-        [_tableView insertRowsAtIndexPaths:indexPaths withRowAnimation:UITableViewRowAnimationAutomatic];
-        
-        
-    });
-    
-    
+    @autoreleasepool {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            NSPredicate *checkIfContactExists = [NSPredicate predicateWithFormat:@"SELF.contactID = %@", values.contactID];
+            if ([self.contactCollection filteredArrayUsingPredicate:checkIfContactExists].count == 0) {
+                NSUInteger nextIndex = self.contactCollection.count;
+                NSIndexPath *indexPath = [NSIndexPath indexPathForRow:nextIndex inSection:0];
+                NSArray *indexPaths = [NSArray arrayWithObject:indexPath];
+                [self.contactCollection insertObject:values atIndex:nextIndex];
+                
+                [_tableView insertRowsAtIndexPaths:indexPaths withRowAnimation:UITableViewRowAnimationAutomatic];
+            }
+            
+            checkIfContactExists = nil;
+            
+        });
+    }
 }
 
-#pragma mark - Table View Data Source
+#pragma mark Table View Data Source
+
+- (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section
+{
+    return self.contactCollection.count;
+}
+
 
 - (ASCellNode *)tableView:(ASTableView *)tableView nodeForRowAtIndexPath:(NSIndexPath *)indexPath {
-    
+    @autoreleasepool {
+        ASTextCellNode *cellNode = [[ASTextCellNode alloc] init];
+        ContactModel *model = self.contactCollection[indexPath.row];
+        cellNode.text = [NSString stringWithFormat:@"%@-%@", model.firstname, model.lastname];
+        model = nil;
+        return cellNode;
+    }
 }
+
+- (void)tableViewLockDataSource:(ASTableView *)tableView
+{
+    self.dataSourceLocked = YES;
+}
+
+- (void)tableViewUnlockDataSource:(ASTableView *)tableView
+{
+    self.dataSourceLocked = NO;
+}
+
+- (BOOL)shouldBatchFetchForTableView:(UITableView *)tableView
+{
+    return NO;
+}
+
+
+
 
 
 
